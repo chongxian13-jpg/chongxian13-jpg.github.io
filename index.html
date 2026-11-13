@@ -9,6 +9,7 @@
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1013;--card:#181b20;--text:#f2f3f5;--sub:#9aa1ab;--line:#2a2e35;color-scheme:dark}}
 :root[data-theme="dark"]{--bg:#0e1013;--card:#181b20;--text:#f2f3f5;--sub:#9aa1ab;--line:#2a2e35;color-scheme:dark}
 *{box-sizing:border-box}
+[hidden]{display:none !important}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
 body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;min-height:100vh}
 main{max-width:560px;margin:0 auto;padding:16px}
@@ -24,10 +25,15 @@ canvas#graph{width:100%;height:70px;display:block;margin-top:8px;border-radius:8
 .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 button{flex:1;min-width:90px;padding:12px;border:0;border-radius:12px;font-size:15px;font-weight:700;background:var(--accent);color:#fff;cursor:pointer}
 button.sec{background:var(--line);color:var(--text)}
+button:disabled{opacity:.4;cursor:default}
 label{display:block;font-size:13px;color:var(--sub);margin-top:6px}
 input[type=range]{width:100%}
 .msg{font-size:13px;color:var(--sub);line-height:1.5}
 .err{color:#dc2626}
+
+/* 탭 */
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+.tabs button{min-width:0}
 
 /* 연속 일수 */
 .streak{display:flex;align-items:center;gap:12px}
@@ -46,11 +52,37 @@ input[type=range]{width:100%}
 /* 휴식 타이머 */
 .timer{font-size:56px;font-weight:800;text-align:center;line-height:1.1;font-variant-numeric:tabular-nums}
 .timer.done{color:var(--ok)}
+
+/* 주간 그래프 */
+.wtitle{text-align:center;font-size:16px;font-weight:800;margin:0 0 14px}
+.wchart{position:relative;height:170px;display:flex;align-items:flex-end;gap:8px;border-bottom:1px solid var(--line)}
+.wcol{flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center}
+.wval{font-size:13px;font-weight:700;margin-bottom:3px;min-height:16px}
+.wbar{width:100%;max-width:36px;border-radius:8px 8px 0 0;background:var(--line)}
+.wbar.some{background:rgba(255,90,31,.45)}
+.wbar.hit{background:var(--accent)}
+.wgoal{position:absolute;left:0;right:0;border-top:2px dashed var(--sub);opacity:.6;pointer-events:none}
+.wgoal span{position:absolute;right:0;top:-18px;font-size:11px;color:var(--sub)}
+.wlabels{display:flex;gap:8px;margin-top:6px}
+.wlabels div{flex:1;text-align:center;font-size:12px;color:var(--sub)}
+.wlabels div.today{color:var(--accent);font-weight:800}
+.stats{display:flex;gap:8px;margin-top:14px}
+.stat{flex:1;background:var(--bg);border-radius:12px;padding:10px 4px;text-align:center}
+.stat b{display:block;font-size:20px}
+.stat span{font-size:12px;color:var(--sub)}
 </style>
 </head>
 <body>
 <main>
 <h1>💪 팔굽혀펴기 카운터</h1>
+
+<div class="tabs">
+<button id="tabWorkout">운동</button>
+<button class="sec" id="tabWeek">주간 기록</button>
+</div>
+
+<!-- ===== 운동 화면 ===== -->
+<section id="pageWorkout">
 
 <div class="card">
 <div class="streak">
@@ -97,6 +129,28 @@ input[type=range]{width:100%}
 </div>
 <div class="row"><button class="sec" id="tstop">타이머 정지</button></div>
 </div>
+
+</section>
+
+<!-- ===== 주간 기록 화면 ===== -->
+<section id="pageWeek" hidden>
+<div class="card">
+<p class="wtitle" id="wTitle"></p>
+<div class="wchart" id="wChart"></div>
+<div class="wlabels" id="wLabels"></div>
+<div class="stats">
+<div class="stat"><b id="wTotal">0</b><span>이번 주 합계</span></div>
+<div class="stat"><b id="wAvg">0</b><span>하루 평균</span></div>
+<div class="stat"><b id="wHit">0/7</b><span>목표 달성</span></div>
+</div>
+<p class="msg" id="wMsg" style="text-align:center;margin-top:12px"></p>
+<div class="row">
+<button class="sec" id="wPrev">◀ 지난주</button>
+<button class="sec" id="wNow">이번 주</button>
+<button class="sec" id="wNext">다음주 ▶</button>
+</div>
+</div>
+</section>
 </main>
 
 <script>
@@ -165,6 +219,7 @@ function renderStreak(){
     nm.textContent=names[d.getDay()];
     wd.appendChild(dot);wd.appendChild(nm);weekEl.appendChild(wd);
   }
+  renderWeek();
 }
 function rollover(){
   var k=dkey(new Date());
@@ -186,6 +241,77 @@ goalEl.onchange=function(){
 };
 document.addEventListener('visibilitychange',function(){if(!document.hidden)rollover()});
 setInterval(rollover,60000);
+
+/* ---------- 탭 전환 ---------- */
+var pageWorkout=document.getElementById('pageWorkout'),pageWeek=document.getElementById('pageWeek'),
+tabWorkout=document.getElementById('tabWorkout'),tabWeek=document.getElementById('tabWeek');
+function showPage(which){
+  var w=which==='week';
+  pageWorkout.hidden=w;pageWeek.hidden=!w;
+  tabWorkout.classList.toggle('sec',w);
+  tabWeek.classList.toggle('sec',!w);
+  if(w){weekOffset=0;renderWeek()}
+  window.scrollTo(0,0);
+}
+tabWorkout.onclick=function(){showPage('workout')};
+tabWeek.onclick=function(){showPage('week')};
+
+/* ---------- 주간 그래프 (월~일) ---------- */
+var weekOffset=0;
+var wTitle=document.getElementById('wTitle'),wChart=document.getElementById('wChart'),
+wLabels=document.getElementById('wLabels'),wTotal=document.getElementById('wTotal'),
+wAvg=document.getElementById('wAvg'),wHit=document.getElementById('wHit'),
+wMsg=document.getElementById('wMsg'),wNext=document.getElementById('wNext');
+var BAR_MAX=130;
+
+function weekStart(off){
+  var d=new Date();
+  d.setDate(d.getDate()-((d.getDay()+6)%7)-7*off); // 그 주의 월요일
+  return d;
+}
+function md(d){return (d.getMonth()+1)+'월 '+d.getDate()+'일'}
+
+function renderWeek(){
+  if(pageWeek.hidden)return;
+  var start=weekStart(weekOffset),end=new Date(start);
+  end.setDate(start.getDate()+6);
+  var names=['월','화','수','목','금','토','일'],tk=dkey(new Date());
+  var vals=[],total=0,hits=0,maxN=0,i;
+  for(i=0;i<7;i++){
+    var d=new Date(start);d.setDate(start.getDate()+i);
+    var k=dkey(d),r=data.days[k],n=r?(r.n||0):0;
+    vals.push({n:n,done:!!(r&&r.done),today:k===tk,label:names[i]});
+    total+=n;if(r&&r.done)hits++;if(n>maxN)maxN=n;
+  }
+  var maxV=Math.max(data.goal,maxN,1),scale=BAR_MAX/maxV;
+
+  wTitle.textContent=(weekOffset===0?'이번 주 ':'')+md(start)+' ~ '+md(end);
+  wChart.textContent='';wLabels.textContent='';
+
+  var gl=document.createElement('div'),gs=document.createElement('span');
+  gl.className='wgoal';gl.style.bottom=Math.round(data.goal*scale)+'px';
+  gs.textContent='목표 '+data.goal;gl.appendChild(gs);wChart.appendChild(gl);
+
+  for(i=0;i<7;i++){
+    var v=vals[i],col=document.createElement('div'),val=document.createElement('div'),bar=document.createElement('div'),lb=document.createElement('div');
+    col.className='wcol';
+    val.className='wval';val.textContent=v.n>0?v.n:'';
+    bar.className='wbar'+(v.done?' hit':(v.n>0?' some':''));
+    bar.style.height=(v.n>0?Math.max(6,Math.round(v.n*scale)):3)+'px';
+    col.appendChild(val);col.appendChild(bar);wChart.appendChild(col);
+    lb.textContent=v.label;if(v.today)lb.className='today';
+    wLabels.appendChild(lb);
+  }
+
+  wTotal.textContent=total;
+  wAvg.textContent=(Math.round(total/7*10)/10);
+  wHit.textContent=hits+'/7';
+  wMsg.textContent=total===0?'이 주에는 기록이 없어요.':'';
+  wNext.disabled=(weekOffset===0);
+}
+document.getElementById('wPrev').onclick=function(){weekOffset++;renderWeek()};
+document.getElementById('wNext').onclick=function(){if(weekOffset>0){weekOffset--;renderWeek()}};
+document.getElementById('wNow').onclick=function(){weekOffset=0;renderWeek()};
 
 /* ---------- 소리/진동 ---------- */
 function unlockAudio(){
