@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>팔굽혀펴기 카운터</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--text:#14161a;--sub:#6b7280;--accent:#ff5a1f;--ok:#16a34a;--line:#e5e7eb;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1013;--card:#181b20;--text:#f2f3f5;--sub:#9aa1ab;--line:#2a2e35;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0e1013;--card:#181b20;--text:#f2f3f5;--sub:#9aa1ab;--line:#2a2e35;color-scheme:dark}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;min-height:100vh}
+main{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
+.count{font-size:96px;font-weight:800;line-height:1;text-align:center;color:var(--accent);transition:transform .15s}
+.count.pop{transform:scale(1.15)}
+.label{text-align:center;color:var(--sub);font-size:14px;margin-top:4px}
+.vid{position:relative;border-radius:12px;overflow:hidden;background:#000;aspect-ratio:4/3}
+video{width:100%;height:100%;object-fit:cover;display:block}
+.state{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.6);color:#fff;border-radius:8px;padding:4px 10px;font-size:13px}
+canvas#graph{width:100%;height:70px;display:block;margin-top:8px;border-radius:8px;background:var(--bg)}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+button{flex:1;min-width:90px;padding:12px;border:0;border-radius:12px;font-size:15px;font-weight:700;background:var(--accent);color:#fff;cursor:pointer}
+button.sec{background:var(--line);color:var(--text)}
+label{display:block;font-size:13px;color:var(--sub);margin-top:6px}
+input[type=range]{width:100%}
+.msg{font-size:13px;color:var(--sub);line-height:1.5}
+.err{color:#dc2626}
+</style>
+</head>
+<body>
+<main>
+<h1>💪 팔굽혀펴기 카운터</h1>
+
+<div class="card">
+<div class="count" id="count">0</div>
+<div class="label">팔굽혀펴기 횟수</div>
+</div>
+
+<div class="card">
+<div class="vid"><video id="video" playsinline muted autoplay></video><div class="state" id="state">카메라 꺼짐</div></div>
+<canvas id="graph" width="520" height="70"></canvas>
+<div class="row">
+<button id="start">카메라 시작</button>
+<button class="sec" id="flip">전후면 전환</button>
+</div>
+<div class="row">
+<button class="sec" id="minus">-1</button>
+<button class="sec" id="plus">+1</button>
+<button class="sec" id="reset">초기화</button>
+</div>
+<label>민감도 (낮을수록 작은 움직임도 인식): <b id="sensVal">6</b>
+<input type="range" id="sens" min="2" max="14" value="6"></label>
+<p class="msg" id="msg">카메라를 바닥에 두고 몸의 옆모습이 보이게 세워 주세요. 시작 후 1~2초 가만히 있다가 운동하면 더 잘 인식돼요. 영상은 기기 밖으로 전송되지 않아요.</p>
+</div>
+</main>
+
+<script>
+(function(){
+var video=document.getElementById('video'),stateEl=document.getElementById('state'),
+countEl=document.getElementById('count'),msg=document.getElementById('msg'),
+graph=document.getElementById('graph'),gctx=graph.getContext('2d'),
+sens=document.getElementById('sens'),sensVal=document.getElementById('sensVal');
+var count=0,facing='user',stream=null,running=false,audioCtx=null;
+var W=96,H=72,cv=document.createElement('canvas');cv.width=W;cv.height=H;
+var cx=cv.getContext('2d',{willReadFrequently:true});
+var prev=null,pos=0,phase='up',lastRep=0,hist=[],settle=0;
+
+function beep(){
+  try{
+    audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+    var o=audioCtx.createOscillator(),g=audioCtx.createGain();
+    o.frequency.value=880;g.gain.value=.15;o.connect(g);g.connect(audioCtx.destination);
+    o.start();o.stop(audioCtx.currentTime+.1);
+  }catch(e){}
+}
+function setCount(n){
+  count=Math.max(0,n);countEl.textContent=count;
+  countEl.classList.add('pop');setTimeout(function(){countEl.classList.remove('pop')},150);
+}
+function rep(){setCount(count+1);beep();if(navigator.vibrate){try{navigator.vibrate(40)}catch(e){}}}
+
+sens.oninput=function(){sensVal.textContent=sens.value};
+document.getElementById('plus').onclick=function(){setCount(count+1)};
+document.getElementById('minus').onclick=function(){setCount(count-1)};
+document.getElementById('reset').onclick=function(){setCount(0);pos=0;phase='up'};
+
+async function startCam(){
+  if(stream){stream.getTracks().forEach(function(t){t.stop()})}
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:640},height:{ideal:480}},audio:false});
+    video.srcObject=stream;await video.play();
+    prev=null;pos=0;phase='up';settle=20;
+    if(!running){running=true;requestAnimationFrame(loop)}
+    stateEl.textContent='준비 중...';
+    msg.classList.remove('err');
+  }catch(e){
+    msg.classList.add('err');
+    msg.textContent='카메라를 켤 수 없어요. 브라우저 주소창의 카메라 권한을 허용했는지 확인해 주세요. (그동안은 +1 버튼으로 세어도 돼요)';
+    stateEl.textContent='카메라 꺼짐';
+  }
+}
+document.getElementById('start').onclick=startCam;
+document.getElementById('flip').onclick=function(){facing=facing==='user'?'environment':'user';if(stream)startCam()};
+
+function loop(){
+  requestAnimationFrame(loop);
+  if(!stream||video.readyState<2)return;
+  cx.drawImage(video,0,0,W,H);
+  var d=cx.getImageData(0,0,W,H).data,cur=new Float32Array(W*H);
+  for(var i=0;i<W*H;i++){cur[i]=(d[i*4]*.3+d[i*4+1]*.59+d[i*4+2]*.11)}
+  if(prev){
+    // 세로 방향 광학 흐름(Lucas-Kanade 1D): 아래로 움직이면 +, 위로 움직이면 -
+    var num=0,den=0;
+    for(var y=1;y<H-1;y++){
+      for(var x=0;x<W;x++){
+        var k=y*W+x,it=cur[k]-prev[k];
+        if(it>6||it<-6){
+          var iy=(cur[k+W]-cur[k-W])/2;
+          num+=it*iy;den+=iy*iy;
+        }
+      }
+    }
+    var vy=den>200?-num/den:0;
+    if(vy>3)vy=3;if(vy<-3)vy=-3;
+    pos=pos*0.96+vy*6;
+    track();
+  }
+  prev=cur;
+  drawGraph();
+}
+function track(){
+  if(settle>0){settle--;stateEl.textContent='준비 중...';return}
+  var T=+sens.value*1.5,now=performance.now();
+  if(phase==='up'&&pos>T){phase='down'}
+  else if(phase==='down'&&pos<-T*0.4&&now-lastRep>600){phase='up';lastRep=now;rep()}
+  stateEl.textContent=phase==='down'?'⬇ 내려가는 중':'⬆ 올라온 상태';
+}
+function drawGraph(){
+  hist.push(pos);if(hist.length>130)hist.shift();
+  var w=graph.width,h=graph.height,T=+sens.value*1.5;
+  gctx.clearRect(0,0,w,h);
+  gctx.strokeStyle='rgba(128,128,128,.4)';gctx.beginPath();
+  gctx.moveTo(0,h/2);gctx.lineTo(w,h/2);gctx.stroke();
+  gctx.strokeStyle='#ff5a1f';gctx.lineWidth=2;gctx.beginPath();
+  for(var i=0;i<hist.length;i++){
+    var x=i/130*w,y=h/2-Math.max(-h/2+2,Math.min(h/2-2,hist[i]/(T*2)*h/2));
+    i?gctx.lineTo(x,y):gctx.moveTo(x,y);
+  }
+  gctx.stroke();
+}
+})();
+</script>
+</body>
+</html>
