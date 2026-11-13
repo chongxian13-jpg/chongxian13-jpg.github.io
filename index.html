@@ -28,6 +28,24 @@ label{display:block;font-size:13px;color:var(--sub);margin-top:6px}
 input[type=range]{width:100%}
 .msg{font-size:13px;color:var(--sub);line-height:1.5}
 .err{color:#dc2626}
+
+/* 연속 일수 */
+.streak{display:flex;align-items:center;gap:12px}
+.flame{font-size:44px;line-height:1}
+.flame.off{filter:grayscale(1);opacity:.45}
+.snum{font-size:30px;font-weight:800;line-height:1.1}
+.ssub{font-size:13px;color:var(--sub);margin-top:2px}
+.week{display:flex;justify-content:space-between;margin-top:14px}
+.wd{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12px;color:var(--sub)}
+.dot{width:30px;height:30px;border-radius:50%;background:var(--line);display:flex;align-items:center;justify-content:center;font-size:15px}
+.dot.on{background:var(--accent)}
+.dot.today{outline:2px solid var(--accent);outline-offset:2px}
+.goal{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;color:var(--sub)}
+.goal input{width:72px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:15px}
+
+/* 휴식 타이머 */
+.timer{font-size:56px;font-weight:800;text-align:center;line-height:1.1;font-variant-numeric:tabular-nums}
+.timer.done{color:var(--ok)}
 </style>
 </head>
 <body>
@@ -35,8 +53,20 @@ input[type=range]{width:100%}
 <h1>💪 팔굽혀펴기 카운터</h1>
 
 <div class="card">
+<div class="streak">
+<div class="flame off" id="flame">🔥</div>
+<div>
+<div class="snum"><span id="streakNum">0</span>일 연속</div>
+<div class="ssub" id="streakSub">오늘 0/10회</div>
+</div>
+</div>
+<div class="week" id="week"></div>
+<div class="goal"><span>하루 목표</span><input type="number" id="goal" min="1" max="500" value="10" inputmode="numeric"><span>회</span></div>
+</div>
+
+<div class="card">
 <div class="count" id="count">0</div>
-<div class="label">팔굽혀펴기 횟수</div>
+<div class="label">오늘 팔굽혀펴기 횟수</div>
 </div>
 
 <div class="card">
@@ -55,6 +85,18 @@ input[type=range]{width:100%}
 <input type="range" id="sens" min="2" max="14" value="6"></label>
 <p class="msg" id="msg">카메라를 바닥에 두고 몸의 옆모습이 보이게 세워 주세요. 시작 후 1~2초 가만히 있다가 운동하면 더 잘 인식돼요. 영상은 기기 밖으로 전송되지 않아요.</p>
 </div>
+
+<div class="card">
+<div class="timer" id="timer">0:00</div>
+<div class="label">세트 사이 휴식 타이머</div>
+<div class="row">
+<button class="sec" data-sec="30">30초</button>
+<button class="sec" data-sec="60">60초</button>
+<button class="sec" data-sec="90">90초</button>
+<button class="sec" data-sec="120">2분</button>
+</div>
+<div class="row"><button class="sec" id="tstop">타이머 정지</button></div>
+</div>
 </main>
 
 <script>
@@ -68,16 +110,105 @@ var W=96,H=72,cv=document.createElement('canvas');cv.width=W;cv.height=H;
 var cx=cv.getContext('2d',{willReadFrequently:true});
 var prev=null,pos=0,phase='up',lastRep=0,hist=[],settle=0;
 
-function beep(){
+/* ---------- 기록 저장 (브라우저 localStorage) ---------- */
+var KEY='pushup_streak_v1';
+var data={goal:10,days:{}};
+try{
+  var raw=localStorage.getItem(KEY);
+  if(raw){
+    var p=JSON.parse(raw);
+    if(p&&typeof p==='object'){
+      data.goal=(p.goal>0&&p.goal<=500)?p.goal:10;
+      data.days=(p.days&&typeof p.days==='object')?p.days:{};
+    }
+  }
+}catch(e){}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){}}
+function dkey(d){
+  var m=d.getMonth()+1,dd=d.getDate();
+  return d.getFullYear()+'-'+(m<10?'0':'')+m+'-'+(dd<10?'0':'')+dd;
+}
+var todayKey=dkey(new Date());
+count=(data.days[todayKey]||{n:0}).n||0;
+
+/* ---------- 연속 일수 ---------- */
+var flameEl=document.getElementById('flame'),streakNumEl=document.getElementById('streakNum'),
+streakSubEl=document.getElementById('streakSub'),weekEl=document.getElementById('week'),
+goalEl=document.getElementById('goal');
+goalEl.value=data.goal;
+
+function streakNum(){
+  var n=0,d=new Date(),r=data.days[dkey(d)];
+  // 오늘 아직 목표를 못 채웠으면 어제부터 셈 (하루가 끝나기 전까지는 연속이 안 끊겨요)
+  if(!(r&&r.done))d.setDate(d.getDate()-1);
+  while(true){
+    r=data.days[dkey(d)];
+    if(r&&r.done){n++;d.setDate(d.getDate()-1)}else break;
+  }
+  return n;
+}
+function renderStreak(){
+  var n=streakNum(),today=data.days[todayKey],doneToday=!!(today&&today.done);
+  streakNumEl.textContent=n;
+  flameEl.classList.toggle('off',n===0);
+  if(doneToday)streakSubEl.textContent='오늘 목표 달성! 🎉 ('+count+'회)';
+  else if(n>0)streakSubEl.textContent='오늘 '+count+'/'+data.goal+'회 · 오늘 채우면 '+(n+1)+'일째';
+  else streakSubEl.textContent='오늘 '+count+'/'+data.goal+'회 · 목표를 채우고 불을 켜세요';
+  var names=['일','월','화','수','목','금','토'];
+  weekEl.textContent='';
+  for(var i=6;i>=0;i--){
+    var d=new Date();d.setDate(d.getDate()-i);
+    var k=dkey(d),r=data.days[k],wd=document.createElement('div'),dot=document.createElement('div'),nm=document.createElement('div');
+    wd.className='wd';
+    dot.className='dot'+(r&&r.done?' on':'')+(i===0?' today':'');
+    dot.textContent=(r&&r.done)?'🔥':'';
+    nm.textContent=names[d.getDay()];
+    wd.appendChild(dot);wd.appendChild(nm);weekEl.appendChild(wd);
+  }
+}
+function rollover(){
+  var k=dkey(new Date());
+  if(k!==todayKey){
+    todayKey=k;
+    count=(data.days[k]||{n:0}).n||0;
+    countEl.textContent=count;
+    renderStreak();
+  }
+}
+goalEl.onchange=function(){
+  var g=Math.round(+goalEl.value);
+  if(!(g>0))g=10;
+  if(g>500)g=500;
+  data.goal=g;goalEl.value=g;
+  var r=data.days[todayKey];
+  if(r&&r.n>=g)r.done=true;
+  save();renderStreak();
+};
+document.addEventListener('visibilitychange',function(){if(!document.hidden)rollover()});
+setInterval(rollover,60000);
+
+/* ---------- 소리/진동 ---------- */
+function unlockAudio(){
   try{
     audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==='suspended')audioCtx.resume();
+  }catch(e){}
+}
+function beep(freq){
+  try{
+    unlockAudio();
     var o=audioCtx.createOscillator(),g=audioCtx.createGain();
-    o.frequency.value=880;g.gain.value=.15;o.connect(g);g.connect(audioCtx.destination);
+    o.frequency.value=freq||880;g.gain.value=.15;o.connect(g);g.connect(audioCtx.destination);
     o.start();o.stop(audioCtx.currentTime+.1);
   }catch(e){}
 }
 function setCount(n){
+  rollover();
   count=Math.max(0,n);countEl.textContent=count;
+  var r=data.days[todayKey]||(data.days[todayKey]={n:0,done:false});
+  r.n=count;
+  if(count>=data.goal)r.done=true;
+  save();renderStreak();
   countEl.classList.add('pop');setTimeout(function(){countEl.classList.remove('pop')},150);
 }
 function rep(){setCount(count+1);beep();if(navigator.vibrate){try{navigator.vibrate(40)}catch(e){}}}
@@ -85,9 +216,46 @@ function rep(){setCount(count+1);beep();if(navigator.vibrate){try{navigator.vibr
 sens.oninput=function(){sensVal.textContent=sens.value};
 document.getElementById('plus').onclick=function(){setCount(count+1)};
 document.getElementById('minus').onclick=function(){setCount(count-1)};
-document.getElementById('reset').onclick=function(){setCount(0);pos=0;phase='up'};
+document.getElementById('reset').onclick=function(){
+  if(count>0&&!confirm('오늘 기록을 0으로 초기화할까요?'))return;
+  setCount(0);
+  var r=data.days[todayKey];if(r){r.done=false}
+  save();renderStreak();
+  pos=0;phase='up';
+};
 
+/* ---------- 휴식 타이머 ---------- */
+var timerEl=document.getElementById('timer'),tEnd=0,tInt=null;
+function fmt(s){var m=Math.floor(s/60),r=s%60;return m+':'+(r<10?'0':'')+r}
+function stopTimer(){clearInterval(tInt);tInt=null}
+function tick(){
+  var left=Math.ceil((tEnd-Date.now())/1000);
+  if(left<=0){
+    stopTimer();
+    timerEl.textContent='휴식 끝!';timerEl.classList.add('done');
+    beep(1040);setTimeout(function(){beep(1040)},250);setTimeout(function(){beep(1040)},500);
+    if(navigator.vibrate){try{navigator.vibrate([200,100,200])}catch(e){}}
+    return;
+  }
+  timerEl.textContent=fmt(left);
+}
+function startTimer(sec){
+  unlockAudio();stopTimer();
+  timerEl.classList.remove('done');
+  tEnd=Date.now()+sec*1000;
+  tick();tInt=setInterval(tick,200);
+}
+var tbtns=document.querySelectorAll('button[data-sec]');
+for(var i=0;i<tbtns.length;i++){
+  tbtns[i].onclick=(function(b){return function(){startTimer(+b.getAttribute('data-sec'))}})(tbtns[i]);
+}
+document.getElementById('tstop').onclick=function(){
+  stopTimer();timerEl.classList.remove('done');timerEl.textContent='0:00';
+};
+
+/* ---------- 카메라 ---------- */
 async function startCam(){
+  unlockAudio();
   if(stream){stream.getTracks().forEach(function(t){t.stop()})}
   try{
     stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:640},height:{ideal:480}},audio:false});
@@ -151,6 +319,10 @@ function drawGraph(){
   }
   gctx.stroke();
 }
+
+/* 첫 화면 표시 */
+countEl.textContent=count;
+renderStreak();
 })();
 </script>
 </body>
